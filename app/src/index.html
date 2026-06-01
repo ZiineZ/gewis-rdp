@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GEWIS Remote Desktop</title>
+<link href="https://fonts.googleapis.com/css2?family=Lato:wght@700&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #fff;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 52px 32px 28px; /* top padding for macOS traffic lights */
+    overflow: hidden;
+  }
+
+  /* ── Login form ─────────────────────────────────────────────────────────── */
+
+  .form {
+    width: 100%;
+    max-width: 260px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .logo {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 20px;
+  }
+
+  .logo img {
+    height: 136px;
+    width: auto;
+    max-width: 100%;
+  }
+
+  input[type="text"],
+  input[type="password"] {
+    width: 100%;
+    padding: 9px 11px;
+    border: 1px solid #d1d5db;
+    border-radius: 7px;
+    font-size: 14px;
+    color: #111;
+    outline: none;
+    -webkit-appearance: none;
+    transition: border-color 0.15s;
+  }
+
+  input:focus { border-color: #C50000; }
+  input::placeholder { color: #9ca3af; }
+
+  #connectBtn {
+    width: 100%;
+    padding: 9px;
+    margin-top: 2px;
+    background: #C50000;
+    color: #fff;
+    border: none;
+    border-radius: 7px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+
+  #connectBtn:hover { background: #A50000; }
+
+  /* Advanced settings */
+  details { margin-top: 4px; }
+
+  summary {
+    font-size: 12px;
+    color: #9ca3af;
+    cursor: pointer;
+    user-select: none;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  summary::-webkit-details-marker { display: none; }
+
+  .arrow {
+    font-size: 9px;
+    display: inline-block;
+    transition: transform 0.15s;
+  }
+
+  details[open] .arrow { transform: rotate(90deg); }
+
+  .adv {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid #f3f4f6;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 13px;
+    color: #374151;
+  }
+
+  select {
+    font-size: 12px;
+    padding: 3px 6px;
+    border: 1px solid #d1d5db;
+    border-radius: 5px;
+    background: #fff;
+    color: #111;
+    outline: none;
+    cursor: pointer;
+  }
+
+  input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    margin: 0;
+    accent-color: #C50000;
+    cursor: pointer;
+  }
+
+  #form-error {
+    font-size: 12px;
+    color: #C50000;
+    min-height: 16px;
+    text-align: center;
+    padding-bottom: 16px;
+  }
+
+  /* ── Red overlay (expands from Connect button on click) ─────────────────── */
+
+  #overlay {
+    position: fixed;
+    inset: 0;
+    background: #C50000;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    clip-path: circle(0% at 50% 70%); /* collapsed on load */
+  }
+
+  #overlay-msg {
+    font-family: 'Lato', sans-serif;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-align: center;
+    max-width: 220px;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+
+    /* White shimmer sweep — indicates the app is working */
+    background: linear-gradient(
+      90deg,
+      rgba(255,255,255,0.5)  0%,
+      rgba(255,255,255,1.0) 40%,
+      rgba(255,255,255,0.5) 80%
+    );
+    background-size: 250% 100%;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    animation: shimmer 1.2s ease-in-out infinite alternate;
+  }
+
+  #overlay-msg.visible { opacity: 1; }
+
+  @keyframes shimmer {
+    from { background-position:  150% center; }
+    to   { background-position: -150% center; }
+  }
+</style>
+</head>
+<body>
+
+<div class="form">
+  <div class="logo">
+    <img src="gewis-logo.svg" alt="GEWIS">
+  </div>
+
+  <input id="member"   type="text"     placeholder="Member number (e.g. m11494)"
+         autocomplete="username" spellcheck="false">
+  <input id="password" type="password" placeholder="Password"
+         autocomplete="current-password">
+
+  <button id="connectBtn" onclick="go()">Connect</button>
+
+  <details>
+    <summary><span class="arrow">&#9654;</span>&nbsp;Advanced settings</summary>
+    <div class="adv">
+      <div class="row">
+        <span>Display</span>
+        <select id="display">
+          <option value="smart">Smart (auto-resize)</option>
+          <option value="fullscreen">Fullscreen</option>
+          <option value="allmonitors">All monitors</option>
+          <option value="windowed">Windowed</option>
+        </select>
+      </div>
+      <div class="row">
+        <span>Clipboard</span>
+        <input type="checkbox" id="clipboard" checked>
+      </div>
+      <div class="row">
+        <span>Sound</span>
+        <input type="checkbox" id="sound" checked>
+      </div>
+    </div>
+    <p style="margin-top:12px;font-size:11px;color:#c4c9d4;text-align:center;">
+      made with ❤️ by <a href="#"
+        onclick="event.preventDefault(); window.__TAURI__.core.invoke('open_url', { url: 'https://gewis.nl/en/member/11494' })"
+        style="color:#c4c9d4;text-decoration:underline;cursor:pointer;">Stan</a>
+    </p>
+  </details>
+
+  <div id="form-error"></div>
+</div>
+
+<div id="overlay">
+  <p id="overlay-msg"></p>
+</div>
+
+<script>
+  // Status updates from Rust background thread
+  window.__TAURI__.event.listen("status", (e) => {
+    document.getElementById("overlay-msg").textContent = e.payload;
+  });
+
+  // Error from Rust: retract circle, show error on form
+  window.__TAURI__.event.listen("connect-error", (e) => {
+    hideOverlay(() => showError(e.payload));
+  });
+
+  // Track ripple origin so the retract animation mirrors the expand
+  let rippleX = "50%", rippleY = "70%";
+
+  function showOverlay(btn) {
+    const r = btn.getBoundingClientRect();
+    rippleX = (r.left + r.width  / 2) + "px";
+    rippleY = (r.top  + r.height / 2) + "px";
+
+    const overlay = document.getElementById("overlay");
+    const msg     = document.getElementById("overlay-msg");
+
+    msg.classList.remove("visible");
+    msg.textContent = "Checking prerequisites...";
+
+    // Snap to 0 without transition, then expand
+    overlay.style.transition    = "none";
+    overlay.style.clipPath      = `circle(0% at ${rippleX} ${rippleY})`;
+    overlay.style.pointerEvents = "all";
+    overlay.offsetHeight; // force reflow
+
+    overlay.style.transition = "clip-path 0.5s cubic-bezier(0.0, 0.0, 0.2, 1.0)";
+    overlay.style.clipPath   = `circle(200% at ${rippleX} ${rippleY})`;
+
+    overlayActive = true;
+    setTimeout(() => msg.classList.add("visible"), 300);
+  }
+
+  function hideOverlay(onDone) {
+    const overlay = document.getElementById("overlay");
+    const msg     = document.getElementById("overlay-msg");
+
+    msg.classList.remove("visible");
+    overlay.style.transition    = "clip-path 0.5s cubic-bezier(0.0, 0.0, 0.2, 1.0)";
+    overlay.style.clipPath      = `circle(0% at ${rippleX} ${rippleY})`;
+    overlay.style.pointerEvents = "none";
+
+    overlayActive = false;
+    if (onDone) setTimeout(onDone, 520);
+  }
+
+  function showError(msg) {
+    document.getElementById("form-error").textContent = msg;
+  }
+
+  async function go() {
+    const member   = document.getElementById("member").value.trim();
+    const password = document.getElementById("password").value;
+
+    document.getElementById("form-error").textContent = "";
+
+    if (!member)   return showError("Enter your member number.");
+    if (!password) return showError("Enter your password.");
+
+    // Show the ripple immediately — Rust runs in background, UI stays live
+    showOverlay(document.getElementById("connectBtn"));
+
+    // Fire-and-forget: returns instantly, progress/errors come via events
+    window.__TAURI__.core.invoke("connect", {
+      member,
+      password,
+      display:   document.getElementById("display").value,
+      clipboard: document.getElementById("clipboard").checked,
+      sound:     document.getElementById("sound").checked,
+    });
+  }
+
+  // Track overlay state so Escape only retracts when the red screen is up
+  let overlayActive = false;
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !overlayActive)  go();
+    if (e.key === "Escape" && overlayActive)  hideOverlay();
+  });
+</script>
+</body>
+</html>
