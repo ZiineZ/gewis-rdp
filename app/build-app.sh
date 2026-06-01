@@ -79,10 +79,14 @@ if [[ -d "$APP" ]]; then
     echo ""
     echo "✓ Built: $APP"
     echo ""
-    echo "Install to Applications:"
+    echo "✓ Built: $APP"
+    echo ""
+
+    # Build the DMG installer
+    ./build-dmg.sh
+
+    echo ""
+    echo "Install to Applications (drag from the .dmg, or copy directly):"
     echo "  cp -r \"$APP\" /Applications/"
     echo "  xattr -cr \"/Applications/GEWIS Remote Desktop.app\""
-    echo ""
-    echo "Or open directly:"
-    echo "  open \"$APP\""
 fi
