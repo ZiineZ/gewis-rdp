@@ -31,24 +31,30 @@ fn status(app: &tauri::AppHandle, msg: &str) {
     app.emit("status", msg).ok();
 }
 
+/// Resolve sdl-freerdp: prefer the binary bundled inside the .app,
+/// fall back to a manually built binary at ~/opt/freerdp-krb5 for development.
 fn freerdp_path(app: &tauri::AppHandle) -> Result<String, String> {
     if let Ok(dir) = app.path().resource_dir() {
-        let p = dir.join("resources").join("xfreerdp");
+        let p = dir.join("resources").join("sdl-freerdp");
         if p.is_file() {
             return Ok(p.to_string_lossy().into());
         }
     }
-    let p = format!("{}/opt/freerdp-krb5/bin/xfreerdp", home());
+    let p = format!("{}/opt/freerdp-krb5/bin/sdl-freerdp", home());
     if Path::new(&p).exists() {
         return Ok(p);
     }
-    Err("FreeRDP not found. Please reinstall the app or run setup.sh.".into())
+    Err("FreeRDP not found. Please reinstall the app.".into())
+}
+
+#[tauri::command]
+fn open_url(url: String) {
+    Command::new("open").arg(url).spawn().ok();
 }
 
 // ── Connect command ───────────────────────────────────────────────────────────
 // Returns immediately so the UI stays responsive.
 // All blocking work runs on a background thread.
-// Errors are sent back as "connect-error" events.
 
 #[tauri::command]
 fn connect(
@@ -89,23 +95,7 @@ fn run_connect(
     let freerdp = freerdp_path(app)?;
     let brew    = brew_prefix()?;
 
-    // Auto-install XQuartz if missing
-    if !Path::new("/Applications/Utilities/XQuartz.app").exists()
-        && !Path::new("/opt/X11").exists()
-    {
-        status(app, "Installing XQuartz...");
-        let ok = Command::new(format!("{}/bin/brew", brew))
-            .args(["install", "--cask", "xquartz"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        if !ok {
-            return Err("XQuartz install failed. Run: brew install --cask xquartz".into());
-        }
-    }
-
+    // Kerberos ticket via Homebrew krb5
     status(app, "Contacting GEWIS identity server...");
 
     let kinit = format!("{}/opt/krb5/bin/kinit", brew);
@@ -142,7 +132,28 @@ fn run_connect(
     status(app, "Requesting remote desktop access ticket...");
     thread::sleep(Duration::from_millis(300));
 
-    // Build xfreerdp argument list
+    // ── Build sdl-freerdp argument list ──────────────────────────────────────
+    //
+    // Latency-optimised flags. The single biggest win is using sdl-freerdp
+    // (renders via Metal) instead of xfreerdp (renders via XQuartz/X11, which
+    // added ~50-200 ms per frame on macOS).
+    //
+    // Other tweaks:
+    //   - GFX with H.264 (AVC444) — server-side encoded video stream, far less
+    //     pixel data on the wire than legacy bitmap updates.
+    //   - +async-update / +async-channels — display + channels on dedicated
+    //     threads so input isn't blocked by network reads.
+    //   - +bitmap-cache / +offscreen-cache — repeat content (window chrome,
+    //     icons) is sent once, not every frame.
+    //   - /codec-cache:rfx — keep codec contexts hot between frames.
+    //   - /max-fast-path-size:65535 — biggest possible fast-path packets,
+    //     fewer round trips.
+    //   - /network:auto — let the server pick the best codec mix for the link.
+    //   - -wallpaper -window-drag -menu-anims -themes — Windows skips drawing
+    //     these on the remote side, less data to push down.
+    //   - -compression — disable bulk compression. On a fast link the CPU
+    //     time spent decompressing is worse than just sending more bytes.
+
     let mut args: Vec<String> = vec![
         format!("/v:{}", TARGET),
         format!("/u:{}", member),
@@ -152,6 +163,20 @@ fn run_connect(
         format!("/gateway:g:{},u:{},d:{},p:{},type:http", GATEWAY, member, REALM, password),
         "/cert:ignore".into(),
         "+credentials-delegation".into(),
+
+        // Performance flags
+        "/gfx:AVC444,thin-client:off,small-cache:on,progressive:off,frame-ack:on".into(),
+        "/network:auto".into(),
+        "+async-update".into(),
+        "+async-channels".into(),
+        "+bitmap-cache".into(),
+        "/codec-cache:rfx".into(),
+        "/max-fast-path-size:65535".into(),
+        "-compression".into(),
+        "-wallpaper".into(),
+        "-window-drag".into(),
+        "-menu-anims".into(),
+        "-themes".into(),
     ];
 
     match display {
@@ -166,13 +191,10 @@ fn run_connect(
 
     status(app, "Opening remote desktop...");
 
-    Command::new("open").args(["-a", "XQuartz"]).spawn().ok();
-    thread::sleep(Duration::from_secs(3));
-
+    // No XQuartz — sdl-freerdp uses Metal directly via SDL3
     let launched = Command::new(&freerdp)
         .args(&args)
         .env("KRB5CCNAME", CCACHE)
-        .env("DISPLAY", ":0")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -183,7 +205,7 @@ fn run_connect(
         if launched {
             "Connected. Remote desktop is opening."
         } else {
-            "Failed to launch. Try reinstalling or running setup.sh."
+            "Failed to launch. Try reinstalling."
         },
     ).ok();
 
@@ -191,11 +213,6 @@ fn run_connect(
 }
 
 // ── App entry point ───────────────────────────────────────────────────────────
-
-#[tauri::command]
-fn open_url(url: String) {
-    Command::new("open").arg(url).spawn().ok();
-}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
