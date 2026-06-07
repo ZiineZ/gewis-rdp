@@ -1,5 +1,5 @@
 {
-  "title": "GEWIS Remote Desktop",
+  "title": "GEWIS RDP Installer",
   "icon": "src-tauri/icons/icon.icns",
   "background": "src-tauri/icons/dmg-background.tiff",
   "format": "ULFO",

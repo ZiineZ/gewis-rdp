@@ -14,7 +14,7 @@ set -e
 cd "$(dirname "$0")"
 
 APP_NAME="GEWIS Remote Desktop"
-VERSION="1.0.0"
+VERSION="1.1.0"
 APP_PATH="src-tauri/target/release/bundle/macos/${APP_NAME}.app"
 DMG_PATH="dist/${APP_NAME}-${VERSION}.dmg"
 ICONS_DIR="src-tauri/icons"
