@@ -200,10 +200,16 @@ fn run_connect(
 
     status(app, "Opening remote desktop...");
 
-    // No XQuartz — sdl-freerdp uses Metal directly via SDL3
+    // No XQuartz — sdl-freerdp uses Metal directly via SDL3.
+    //
+    // SDL_VIDEO_MAC_FULLSCREEN_SPACES=1 tells SDL3 that when the window
+    // toggles fullscreen via /f, it should use macOS native fullscreen
+    // (separate Space, animated transition, menu bar hidden) instead of
+    // a borderless window expanded to fill the screen.
     let launched = Command::new(&freerdp)
         .args(&args)
         .env("KRB5CCNAME", CCACHE)
+        .env("SDL_VIDEO_MAC_FULLSCREEN_SPACES", "1")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
