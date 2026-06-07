@@ -164,24 +164,24 @@ fn run_connect(
         "/cert:ignore".into(),
         "+credentials-delegation".into(),
 
-        // Performance flags — tuned for input responsiveness.
+        // Performance flags — the bottleneck is frame-ack flow control:
+        // the server waits for the client to ack each frame before sending
+        // the next, so mouse-driven hover updates queue 2s behind a slow
+        // ack pipeline. frame-ack:off lets the server stream frames freely.
         //
-        // Key changes from earlier iterations:
-        //   - /rfx instead of /gfx:AVC444 — RemoteFX has much lower per-frame
-        //     encode latency on the server, so mouse-hover state changes
-        //     appear nearly instantly. AVC444 batches frames for the encoder.
-        //   - No +async-channels — the async channel thread queues mouse
-        //     motion events behind other channel traffic, which is exactly
-        //     the symptom of "keyboard fast, mouse delayed".
-        //   - /multitransport — opens a UDP side-channel for input/feedback.
-        //     The HTTPS gateway buffers TCP, UDP bypasses that.
-        "/rfx".into(),
-        "/network:lan".into(),
+        // Also removed:
+        //   - /multitransport (UDP) — GEWIS gateway likely blocks UDP,
+        //     so it silently degraded to slow TCP with extra setup overhead.
+        //   - /network:lan — was forcing a profile that disabled bandwidth-
+        //     reactive optimizations. /network:auto adapts to the actual link.
+        //   - -compression — uncompressed frames over a TCP gateway are huge
+        //     and saturate the link; default compression is far better.
+        "/gfx:RFX:on,progressive:off,frame-ack:off,small-cache:on,thin-client:off".into(),
+        "/network:auto".into(),
         "+async-update".into(),
-        "/multitransport".into(),
         "/cache:bitmap:on,codec:rfx,offscreen:on".into(),
         "/max-fast-path-size:65535".into(),
-        "-compression".into(),
+        "/log-level:OFF".into(),
         "-wallpaper".into(),
         "-window-drag".into(),
         "-menu-anims".into(),
