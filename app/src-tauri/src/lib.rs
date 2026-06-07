@@ -164,11 +164,21 @@ fn run_connect(
         "/cert:ignore".into(),
         "+credentials-delegation".into(),
 
-        // Performance flags
-        "/gfx:AVC444,thin-client:off,small-cache:on,progressive:off,frame-ack:on".into(),
-        "/network:auto".into(),
+        // Performance flags — tuned for input responsiveness.
+        //
+        // Key changes from earlier iterations:
+        //   - /rfx instead of /gfx:AVC444 — RemoteFX has much lower per-frame
+        //     encode latency on the server, so mouse-hover state changes
+        //     appear nearly instantly. AVC444 batches frames for the encoder.
+        //   - No +async-channels — the async channel thread queues mouse
+        //     motion events behind other channel traffic, which is exactly
+        //     the symptom of "keyboard fast, mouse delayed".
+        //   - /multitransport — opens a UDP side-channel for input/feedback.
+        //     The HTTPS gateway buffers TCP, UDP bypasses that.
+        "/rfx".into(),
+        "/network:lan".into(),
         "+async-update".into(),
-        "+async-channels".into(),
+        "/multitransport".into(),
         "/cache:bitmap:on,codec:rfx,offscreen:on".into(),
         "/max-fast-path-size:65535".into(),
         "-compression".into(),
