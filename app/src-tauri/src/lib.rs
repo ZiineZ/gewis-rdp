@@ -1,5 +1,6 @@
 use std::{
     io::Write,
+    net::{TcpStream, ToSocketAddrs},
     path::Path,
     process::{Command, Stdio},
     thread,
@@ -50,6 +51,20 @@ fn freerdp_path(app: &tauri::AppHandle) -> Result<String, String> {
 #[tauri::command]
 fn open_url(url: String) {
     Command::new("open").arg(url).spawn().ok();
+}
+
+/// Probe whether the GEWIS RDP server is reachable directly on TCP 3389.
+/// True on TU/e WiFi (and some VPNs), false from the public internet.
+/// Used to decide whether to skip the HTTPS gateway tunnel.
+fn is_direct_reachable() -> bool {
+    let addr = match format!("{}:3389", TARGET).to_socket_addrs() {
+        Ok(mut iter) => match iter.next() {
+            Some(a) => a,
+            None => return false,
+        },
+        Err(_) => return false,
+    };
+    TcpStream::connect_timeout(&addr, Duration::from_millis(1500)).is_ok()
 }
 
 // ── Connect command ───────────────────────────────────────────────────────────
@@ -126,67 +141,52 @@ fn run_connect(
     }
 
     status(app, "Identity confirmed.");
-    thread::sleep(Duration::from_millis(250));
-    status(app, "Requesting gateway access ticket...");
-    thread::sleep(Duration::from_millis(300));
-    status(app, "Requesting remote desktop access ticket...");
-    thread::sleep(Duration::from_millis(300));
 
-    // ── Build sdl-freerdp argument list ──────────────────────────────────────
+    // ── Network-path detection ────────────────────────────────────────────────
     //
-    // Latency-optimised flags. The single biggest win is using sdl-freerdp
-    // (renders via Metal) instead of xfreerdp (renders via XQuartz/X11, which
-    // added ~50-200 ms per frame on macOS).
+    // On TU/e WiFi the RDP server is reachable directly on TCP 3389, which
+    // is dramatically faster than the HTTPS gateway. The gateway is only
+    // needed when off-campus.
     //
-    // Other tweaks:
-    //   - GFX with H.264 (AVC444) — server-side encoded video stream, far less
-    //     pixel data on the wire than legacy bitmap updates.
-    //   - +async-update / +async-channels — display + channels on dedicated
-    //     threads so input isn't blocked by network reads.
-    //   - +bitmap-cache / +offscreen-cache — repeat content (window chrome,
-    //     icons) is sent once, not every frame.
-    //   - /codec-cache:rfx — keep codec contexts hot between frames.
-    //   - /max-fast-path-size:65535 — biggest possible fast-path packets,
-    //     fewer round trips.
-    //   - /network:auto — let the server pick the best codec mix for the link.
-    //   - -wallpaper -window-drag -menu-anims -themes — Windows skips drawing
-    //     these on the remote side, less data to push down.
-    //   - -compression — disable bulk compression. On a fast link the CPU
-    //     time spent decompressing is worse than just sending more bytes.
+    // Probe port 3389 with a 1.5 s timeout. If reachable, use direct mode.
+    // If not, fall through to the gateway path.
+    let direct_ok = is_direct_reachable();
 
-    let mut args: Vec<String> = vec![
-        format!("/v:{}", TARGET),
+    if direct_ok {
+        status(app, "On TU/e network — using direct connection.");
+    } else {
+        status(app, "Off-campus — connecting via gateway...");
+    }
+    thread::sleep(Duration::from_millis(200));
+
+    let mut args: Vec<String> = Vec::new();
+
+    if direct_ok {
+        // Direct TCP — fastest path. No gateway overhead, default flags suffice.
+        args.push(format!("/v:{}:3389", TARGET));
+    } else {
+        // Gateway path — slower but works from anywhere.
+        args.push(format!("/v:{}", TARGET));
+        args.push(format!(
+            "/gateway:g:{},u:{},d:{},p:{},type:http",
+            GATEWAY, member, REALM, password
+        ));
+    }
+
+    args.extend([
         format!("/u:{}", member),
         format!("/d:{}", REALM),
         format!("/p:{}", password),
         "/sec:nla".into(),
-        format!("/gateway:g:{},u:{},d:{},p:{},type:http", GATEWAY, member, REALM, password),
         "/cert:ignore".into(),
         "+credentials-delegation".into(),
-
-        // Performance flags — the bottleneck is frame-ack flow control:
-        // the server waits for the client to ack each frame before sending
-        // the next, so mouse-driven hover updates queue 2s behind a slow
-        // ack pipeline. frame-ack:off lets the server stream frames freely.
-        //
-        // Also removed:
-        //   - /multitransport (UDP) — GEWIS gateway likely blocks UDP,
-        //     so it silently degraded to slow TCP with extra setup overhead.
-        //   - /network:lan — was forcing a profile that disabled bandwidth-
-        //     reactive optimizations. /network:auto adapts to the actual link.
-        //   - -compression — uncompressed frames over a TCP gateway are huge
-        //     and saturate the link; default compression is far better.
-        "/gfx:RFX:on,progressive:off,frame-ack:off,small-cache:on,thin-client:off".into(),
-        "/network:auto".into(),
-        "+async-update".into(),
-        "/cache:bitmap:on,codec:rfx,offscreen:on".into(),
-        "/max-fast-path-size:65535".into(),
         "/log-level:OFF".into(),
+        // Cosmetic flags — Windows skips drawing these server-side, less data.
         "-wallpaper".into(),
         "-window-drag".into(),
         "-menu-anims".into(),
         "-themes".into(),
-    ];
+    ]);
 
     match display {
         "smart"       => args.push("+dynamic-resolution".into()),
