@@ -78,7 +78,7 @@ Download the latest **GEWIS Remote Desktop-*.dmg** from the
          │ spawn
          ▼
 ┌──────────────────┐                       ┌──────────────────┐
-│ sdl-freerdp      │ ◄── on TU/e WiFi ──► │ RDP server :3389 │
+│ sdl-freerdp      │ ◄── on TU/e WiFi ──►  │ RDP server :3389 │
 │ (SDL3 + Metal,   │      direct TCP       │ (fast)           │
 │  Kerberos build) │                       └──────────────────┘
 │                  │
