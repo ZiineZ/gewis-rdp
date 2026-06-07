@@ -92,6 +92,12 @@ echo "  Configuring..."
     -DCMAKE_PREFIX_PATH="${BREW};/opt/X11" \
     -DCMAKE_IGNORE_PREFIX_PATH=/opt/local \
     -DCMAKE_INSTALL_RPATH="${INSTALL_DIR}/lib;${BREW}/lib;/opt/X11/lib" \
+    -DWITH_VERBOSE_WINPR_ASSERT=OFF \
+    -DWITH_VIDEOTOOLBOX=ON \
+    -DWITH_GFX_H264=ON \
+    -DWITH_DEBUG_ALL=OFF \
+    -DWITH_VAAPI=OFF \
+    -DWITH_VAAPI_H264_ENCODING=OFF \
     > /dev/null
 
 echo "  Compiling (this takes a few minutes)..."
