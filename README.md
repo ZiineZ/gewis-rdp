@@ -25,6 +25,7 @@ reachable and skips the slow HTTPS gateway, giving Windows-level latency.
 
 ## Install (end users)
 
+### macOS
 Download the latest **GEWIS Remote Desktop-*.dmg** from the
 [Releases](https://github.com/ZiineZ/gewis-rdp/releases) page, then:
 
@@ -49,21 +50,22 @@ Download the latest **GEWIS Remote Desktop-*.dmg** from the
    EOF
    ```
 
-4. Open the downloaded `.dmg`. A volume called **GEWIS RDP Installer**
-   mounts on your desktop — that's the installer, not a second app.
-   Drag the app icon onto the **Applications** shortcut, then eject the
-   installer disk (drag it to Trash, or right-click → Eject).
+4. Open the downloaded `.dmg`. Drag the app icon onto the **Applications** shortcut, then eject the installer disk.
 
-5. First launch from `/Applications/`. If macOS says "can't be opened",
-   clear the quarantine flag once:
+5. First launch from `/Applications/`. If macOS says "can't be opened", clear the quarantine flag once:
    ```sh
    xattr -cr "/Applications/GEWIS Remote Desktop.app"
    ```
 
+### Windows
+Download the latest **GEWIS-Remote-Desktop-*_x64_en-US.msi** or `.exe` installer from the [Releases](https://github.com/ZiineZ/gewis-rdp/releases) page and run the installer. 
+
+No additional configuration or command-line setup (like Kerberos configuration or Homebrew) is required on Windows, as the application utilizes native Windows SSPI to automatically negotiate Kerberos/NTLM authentication.
+
 ### Requirements
 
-- macOS 11 Big Sur or later
-- Apple Silicon (M1/M2/M3/M4). Intel Macs not supported by this build
+* **macOS**: macOS 11 Big Sur or later (Apple Silicon M1/M2/M3/M4; Intel Macs are not supported by the custom FreeRDP build).
+* **Windows**: Windows 10 or 11 (x64).
 
 ---
 
@@ -102,27 +104,31 @@ Download the latest **GEWIS Remote Desktop-*.dmg** from the
 
 ## Build from source
 
-```sh
-# One-time: compile the KRB5-enabled FreeRDP into ~/opt/freerdp-krb5.
-# Takes ~5-10 min. Patches Tauri's FreeRDP with VideoToolbox + KRB5,
-# disables verbose runtime asserts.
-./setup.sh
+### macOS
+1. Compile the KRB5-enabled FreeRDP into `~/opt/freerdp-krb5` (takes ~5-10 min):
+   ```sh
+   ./setup.sh
+   ```
+2. Build, sign, and package the app into a DMG:
+   ```sh
+   cd app
+   ./build-app.sh
+   ```
 
-# Bundle the freshly-built FreeRDP into the Tauri project,
-# compile the Rust app, sign, and produce both the .app and a .dmg
-# with the custom background.
-cd app
-./build-app.sh   # produces src-tauri/target/release/bundle/macos/*.app
-./build-dmg.sh   # produces dist/GEWIS Remote Desktop-X.Y.Z.dmg
-```
+### Windows
+1. Download a pre-compiled `wfreerdp.exe` binary. You can obtain it from the [FreeRDP Nightly Windows CI](https://ci.freerdp.com/job/freerdp-nightly-windows/) or install it via MSYS2: `pacman -S mingw-w64-x86_64-freerdp`.
+2. Copy `wfreerdp.exe` into the `app/src-tauri/resources/` directory.
+3. Build the installer using the Tauri CLI:
+   ```sh
+   cd app
+   cargo tauri build
+   ```
+   This will produce a standard `.exe` installer via NSIS in `app/src-tauri/target/release/bundle/nsis/`.
 
 ### Build requirements
 
-- macOS 11+ with Xcode command-line tools
-- Homebrew (`/opt/homebrew` on Apple Silicon)
-- Rust 1.88+ (`brew install rust`)
-- Tauri CLI 2 (`cargo install tauri-cli --version "^2.0"`)
-- `appdmg` is installed automatically by `build-dmg.sh` (no global pollution)
+* **macOS**: macOS 11+ with Xcode Command Line Tools, Homebrew, Rust 1.88+, Tauri CLI 2 (`cargo install tauri-cli --version "^2.0"`).
+* **Windows**: Windows 10/11, Rust 1.88+, Tauri CLI 2, NSIS (required by Tauri to package the installer).
 
 ---
 
@@ -137,13 +143,15 @@ gewis-rdp/
 │   │   └── GewisRDP.svg          ← Source for the macOS app icon
 │   ├── src-tauri/
 │   │   ├── src/lib.rs            ← Rust backend (kinit, FreeRDP launch)
-│   │   ├── tauri.conf.json
+│   │   ├── tauri.conf.json       ← Main Tauri config
+│   │   ├── tauri.macos.conf.json   ← macOS configuration overrides
+│   │   ├── tauri.windows.conf.json ← Windows configuration overrides
 │   │   ├── resources/            ← Bundled FreeRDP binaries (gitignored)
 │   │   └── icons/                ← App icon + DMG background
 │   ├── dmg-config.json           ← appdmg layout config
-│   ├── build-app.sh              ← Bundle FreeRDP, build, sign
-│   └── build-dmg.sh              ← Package the .app into a custom DMG
-├── setup.sh                      ← Compile FreeRDP 3.x with KRB5=ON
+│   ├── build-app.sh              ← Bundle FreeRDP, build, sign (macOS)
+│   └── build-dmg.sh              ← Package the .app into a custom DMG (macOS)
+├── setup.sh                      ← Compile FreeRDP 3.x with KRB5=ON (macOS)
 └── README.md
 ```
 

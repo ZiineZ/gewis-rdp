@@ -9,25 +9,13 @@
 
   "bundle": {
     "active": true,
-    "targets": ["app"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ],
-    "resources": [
-      "resources/sdl-freerdp",
-      "resources/libfreerdp-client3.3.dylib",
-      "resources/libfreerdp3.3.dylib",
-      "resources/libwinpr3.3.dylib",
-      "resources/libSDL3.0.dylib",
-      "resources/libSDL3_ttf.0.dylib"
-    ],
-    "macOS": {
-      "minimumSystemVersion": "11.0"
-    }
+    ]
   },
 
   "app": {

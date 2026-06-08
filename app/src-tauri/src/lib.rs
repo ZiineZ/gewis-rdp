@@ -1,20 +1,26 @@
 use std::{
-    io::Write,
     net::{TcpStream, ToSocketAddrs},
     path::Path,
     process::{Command, Stdio},
     thread,
     time::Duration,
 };
+
+#[cfg(target_os = "macos")]
+use std::io::Write;
+
 use tauri::{Emitter, Manager};
 
 const REALM:   &str = "GEWISWG.GEWIS.NL";
 const GATEWAY: &str = "gewisvdesktop.gewis.nl";
 const TARGET:  &str = "gewisvdesktop.gewis.nl";
+
+#[cfg(target_os = "macos")]
 const CCACHE:  &str = "FILE:/tmp/krb5cc_gewis_rdp";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+#[cfg(target_os = "macos")]
 fn brew_prefix() -> Result<String, String> {
     for prefix in &["/opt/homebrew", "/usr/local"] {
         if Path::new(&format!("{}/bin/brew", prefix)).exists() {
@@ -24,6 +30,7 @@ fn brew_prefix() -> Result<String, String> {
     Err("Homebrew not found. Install it from https://brew.sh".into())
 }
 
+#[cfg(target_os = "macos")]
 fn home() -> String {
     std::env::var("HOME").unwrap_or_default()
 }
@@ -32,25 +39,47 @@ fn status(app: &tauri::AppHandle, msg: &str) {
     app.emit("status", msg).ok();
 }
 
-/// Resolve sdl-freerdp: prefer the binary bundled inside the .app,
-/// fall back to a manually built binary at ~/opt/freerdp-krb5 for development.
+/// Resolve FreeRDP path:
+/// - macOS: prefer bundled `sdl-freerdp`, fall back to `~/opt/freerdp-krb5/bin/sdl-freerdp`
+/// - Windows: prefer bundled `wfreerdp.exe`, fall back to standard installation paths.
 fn freerdp_path(app: &tauri::AppHandle) -> Result<String, String> {
-    if let Ok(dir) = app.path().resource_dir() {
-        let p = dir.join("resources").join("sdl-freerdp");
-        if p.is_file() {
-            return Ok(p.to_string_lossy().into());
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(dir) = app.path().resource_dir() {
+            let p = dir.join("resources").join("sdl-freerdp");
+            if p.is_file() {
+                return Ok(p.to_string_lossy().into());
+            }
         }
+        let p = format!("{}/opt/freerdp-krb5/bin/sdl-freerdp", home());
+        if Path::new(&p).exists() {
+            return Ok(p);
+        }
+        Err("FreeRDP not found. Please reinstall the app.".into())
     }
-    let p = format!("{}/opt/freerdp-krb5/bin/sdl-freerdp", home());
-    if Path::new(&p).exists() {
-        return Ok(p);
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(dir) = app.path().resource_dir() {
+            let p = dir.join("resources").join("wfreerdp.exe");
+            if p.is_file() {
+                return Ok(p.to_string_lossy().into());
+            }
+        }
+        let p = "C:\\Program Files\\FreeRDP\\wfreerdp.exe";
+        if Path::new(p).exists() {
+            return Ok(p.into());
+        }
+        Err("FreeRDP (wfreerdp.exe) not found. Please place wfreerdp.exe in resources.".into())
     }
-    Err("FreeRDP not found. Please reinstall the app.".into())
 }
 
 #[tauri::command]
 fn open_url(url: String) {
+    #[cfg(target_os = "macos")]
     Command::new("open").arg(url).spawn().ok();
+
+    #[cfg(target_os = "windows")]
+    Command::new("cmd").args(["/c", "start", "", &url]).spawn().ok();
 }
 
 /// Probe whether the GEWIS RDP server is reachable directly on TCP 3389.
@@ -108,39 +137,44 @@ fn run_connect(
     status(app, "Checking prerequisites...");
 
     let freerdp = freerdp_path(app)?;
-    let brew    = brew_prefix()?;
 
-    // Kerberos ticket via Homebrew krb5
-    status(app, "Contacting GEWIS identity server...");
+    #[cfg(target_os = "macos")]
+    let ccache = {
+        let brew = brew_prefix()?;
 
-    let kinit = format!("{}/opt/krb5/bin/kinit", brew);
-    let mut proc = Command::new(&kinit)
-        .args(["-c", CCACHE, &format!("{}@{}", member, REALM)])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|e| format!("Could not start kinit: {}", e))?;
+        // Kerberos ticket via Homebrew krb5
+        status(app, "Contacting GEWIS identity server...");
 
-    status(app, "Sending credentials...");
+        let kinit = format!("{}/opt/krb5/bin/kinit", brew);
+        let mut proc = Command::new(&kinit)
+            .args(["-c", CCACHE, &format!("{}@{}", member, REALM)])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| format!("Could not start kinit: {}", e))?;
 
-    proc.stdin
-        .as_mut()
-        .ok_or("kinit stdin unavailable")?
-        .write_all(format!("{}\n", password).as_bytes())
-        .map_err(|e| e.to_string())?;
+        status(app, "Sending credentials...");
 
-    drop(proc.stdin.take());
+        proc.stdin
+            .as_mut()
+            .ok_or("kinit stdin unavailable")?
+            .write_all(format!("{}\n", password).as_bytes())
+            .map_err(|e| e.to_string())?;
 
-    status(app, "Waiting for Kerberos response...");
+        drop(proc.stdin.take());
 
-    if !proc.wait().map_err(|e| e.to_string())?.success() {
-        return Err(
-            "Authentication failed. Are you on TU/e WiFi or is your VPN on?".into(),
-        );
-    }
+        status(app, "Waiting for Kerberos response...");
 
-    status(app, "Identity confirmed.");
+        if !proc.wait().map_err(|e| e.to_string())?.success() {
+            return Err(
+                "Authentication failed. Are you on TU/e WiFi or is your VPN on?".into(),
+            );
+        }
+
+        status(app, "Identity confirmed.");
+        CCACHE
+    };
 
     // ── Network-path detection ────────────────────────────────────────────────
     //
@@ -200,20 +234,19 @@ fn run_connect(
 
     status(app, "Opening remote desktop...");
 
-    // No XQuartz — sdl-freerdp uses Metal directly via SDL3.
-    //
-    // SDL_VIDEO_MAC_FULLSCREEN_SPACES=1 tells SDL3 that when the window
-    // toggles fullscreen via /f, it should use macOS native fullscreen
-    // (separate Space, animated transition, menu bar hidden) instead of
-    // a borderless window expanded to fill the screen.
-    let launched = Command::new(&freerdp)
-        .args(&args)
-        .env("KRB5CCNAME", CCACHE)
-        .env("SDL_VIDEO_MAC_FULLSCREEN_SPACES", "1")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .is_ok();
+    // Spawn the FreeRDP client process.
+    let mut cmd = Command::new(&freerdp);
+    cmd.args(&args);
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+
+    #[cfg(target_os = "macos")]
+    {
+        cmd.env("KRB5CCNAME", ccache);
+        cmd.env("SDL_VIDEO_MAC_FULLSCREEN_SPACES", "1");
+    }
+
+    let launched = cmd.spawn().is_ok();
 
     app.emit(
         "status",
