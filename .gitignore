@@ -9,8 +9,9 @@ app/src-tauri/gen/
 # ── Bundled FreeRDP binaries ──────────────────────────────────────────────────
 # These are produced by setup.sh + the bundling step. They're large (~5 MB)
 # and architecture-specific, so we don't track them in git.
-app/resources/
-app/src-tauri/resources/
+app/resources/*
+app/src-tauri/resources/*
+!app/src-tauri/resources/wfreerdp.exe
 
 # ── Built FreeRDP from source ─────────────────────────────────────────────────
 # setup.sh downloads + builds FreeRDP into these directories.
