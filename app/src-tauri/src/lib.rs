@@ -106,6 +106,7 @@ fn connect(
     member: String,
     password: String,
     display: String,
+    scale: String,
     clipboard: bool,
     sound: bool,
 ) -> Result<(), String> {
@@ -118,7 +119,7 @@ fn connect(
     }
 
     thread::spawn(move || {
-        if let Err(e) = run_connect(&app, &member, &password, &display, clipboard, sound) {
+        if let Err(e) = run_connect(&app, &member, &password, &display, &scale, clipboard, sound) {
             app.emit("connect-error", e).ok();
         }
     });
@@ -131,6 +132,7 @@ fn run_connect(
     member: &str,
     password: &str,
     display: &str,
+    scale: &str,
     clipboard: bool,
     sound: bool,
 ) -> Result<(), String> {
@@ -223,10 +225,21 @@ fn run_connect(
     ]);
 
     match display {
-        "smart"       => args.push("+dynamic-resolution".into()),
+        // Real macOS fullscreen (own Space via SDL_VIDEO_MAC_FULLSCREEN_SPACES).
         "fullscreen"  => args.push("/f".into()),
+        // Resizable window; +dynamic-resolution reflows the remote desktop on resize.
+        "windowed"    => args.push("+dynamic-resolution".into()),
+        // Fullscreen spanning every monitor.
         "allmonitors" => { args.push("/f".into()); args.push("/multimon".into()); }
-        _             => {}
+        _             => args.push("/f".into()),
+    }
+
+    // HiDPI: tell the server to render the desktop at this DPI scale, the same
+    // way Windows' "Display scaling" setting does. Without this, Retina panels
+    // report their full physical pixel count and everything renders tiny.
+    // ponytail: 200 default = Retina 2x; dropdown covers the rest.
+    if scale != "100" {
+        args.push(format!("/scale-desktop:{}", scale));
     }
 
     args.push(if clipboard { "+clipboard".into() } else { "-clipboard".into() });

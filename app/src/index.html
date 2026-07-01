@@ -207,10 +207,19 @@
       <div class="row">
         <span>Display</span>
         <select id="display">
-          <option value="smart">Smart (auto-resize)</option>
           <option value="fullscreen">Fullscreen</option>
+          <option value="windowed">Windowed (resizable)</option>
           <option value="allmonitors">All monitors</option>
-          <option value="windowed">Windowed</option>
+        </select>
+      </div>
+      <div class="row">
+        <span>Scale</span>
+        <select id="scale">
+          <option value="100">100%</option>
+          <option value="150">150%</option>
+          <option value="200" selected>200% (Retina)</option>
+          <option value="250">250%</option>
+          <option value="300">300%</option>
         </select>
       </div>
       <div class="row">
@@ -308,6 +317,7 @@
       member,
       password,
       display:   document.getElementById("display").value,
+      scale:     document.getElementById("scale").value,
       clipboard: document.getElementById("clipboard").checked,
       sound:     document.getElementById("sound").checked,
     });
