@@ -64,9 +64,20 @@ cargo tauri icon "$ICON_SRC" --output src-tauri/icons 2>/dev/null || true
 
 # ── Build ─────────────────────────────────────────────────────────────────────
 echo "[4/4] Building app (first run takes ~2-5 min to compile dependencies)..."
+
+# Updater signing key (for auto-update artifacts). Optional: if absent, the
+# updater tarball is still built but unsigned and won't be usable for updates.
+KEY_PATH="${TAURI_KEY_PATH:-$HOME/.tauri/gewis-rdp.key}"
+KEY_PW="${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}"
+if [[ -f "$KEY_PATH" ]]; then
+    export TAURI_SIGNING_PRIVATE_KEY="$(cat "$KEY_PATH")"
+    export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$KEY_PW"
+fi
+
 cargo tauri build
 
 APP="src-tauri/target/release/bundle/macos/GEWIS Remote Desktop.app"
+MACOS_DIR="src-tauri/target/release/bundle/macos"
 if [[ -d "$APP" ]]; then
     # Ad-hoc sign the bundled FreeRDP binaries and the app.
     # install_name_tool invalidates code signatures; macOS requires valid signatures to launch.
@@ -76,8 +87,17 @@ if [[ -d "$APP" ]]; then
     done
     codesign --force --deep --sign - "$APP" 2>/dev/null
 
-    echo ""
-    echo "✓ Built: $APP"
+    # cargo tauri build creates the updater tarball BEFORE the re-sign above, so
+    # it would ship binaries with invalidated signatures. Re-pack from the signed
+    # .app and re-sign the tarball.
+    if [[ -f "$KEY_PATH" ]]; then
+        echo "  Re-packing signed updater artifact..."
+        ( cd "$MACOS_DIR" && rm -f *.app.tar.gz *.app.tar.gz.sig \
+            && tar -czf "GEWIS Remote Desktop.app.tar.gz" "GEWIS Remote Desktop.app" )
+        cargo tauri signer sign -f "$KEY_PATH" -p "$KEY_PW" \
+            "$MACOS_DIR/GEWIS Remote Desktop.app.tar.gz" >/dev/null
+    fi
+
     echo ""
     echo "✓ Built: $APP"
     echo ""

@@ -82,6 +82,126 @@ fn open_url(url: String) {
     Command::new("cmd").args(["/c", "start", "", &url]).spawn().ok();
 }
 
+// ── Credential storage (macOS Keychain via the built-in `security` CLI) ────────
+// ponytail: shell out to `security` rather than pull in the keyring crate — it's
+// native, zero-dep, and the password already transits argv via FreeRDP's /p:,
+// so `-w <pw>`'s brief argv exposure adds no new risk on a single-user Mac.
+const KEYCHAIN_SERVICE: &str = "GEWIS Remote Desktop";
+
+#[tauri::command]
+#[allow(unused_variables)]
+fn save_credentials(member: String, password: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let ok = Command::new("security")
+            .args(["add-generic-password", "-U",
+                   "-s", KEYCHAIN_SERVICE, "-a", &member, "-w", &password])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !ok {
+            return Err("Could not save to Keychain.".into());
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+#[allow(unused_variables)]
+fn load_password(member: String) -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        let out = Command::new("security")
+            .args(["find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", &member, "-w"])
+            .output()
+            .ok()?;
+        if out.status.success() {
+            let pw = String::from_utf8_lossy(&out.stdout).trim_end().to_string();
+            if !pw.is_empty() {
+                return Some(pw);
+            }
+        }
+    }
+    None
+}
+
+#[tauri::command]
+#[allow(unused_variables)]
+fn forget_credentials(member: String) {
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("security")
+            .args(["delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", &member])
+            .status()
+            .ok();
+    }
+}
+
+// ── Auto-update (checks GitHub Releases, see plugins.updater in tauri.conf) ─────
+#[tauri::command]
+async fn check_for_update(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_updater::UpdaterExt;
+    let updater = app.updater().map_err(|e| e.to_string())?;
+    match updater.check().await {
+        Ok(Some(update)) => Ok(Some(update.version)),
+        Ok(None) => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+#[tauri::command]
+async fn do_update(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_updater::UpdaterExt;
+    let updater = app.updater().map_err(|e| e.to_string())?;
+    let update = updater
+        .check().await.map_err(|e| e.to_string())?
+        .ok_or("No update available")?;
+    update
+        .download_and_install(|_downloaded, _total| {}, || {})
+        .await
+        .map_err(|e| e.to_string())?;
+    app.restart();
+}
+
+// ── First-run Kerberos config (macOS) ──────────────────────────────────────────
+// Writes /etc/krb5.conf with the GEWIS realm via a single admin prompt, so users
+// don't have to hand-edit a system file. Leaves an existing config untouched.
+#[cfg(target_os = "macos")]
+fn ensure_krb5_conf(app: &tauri::AppHandle) -> Result<(), String> {
+    const CONF: &str = "/etc/krb5.conf";
+    const CONTENT: &str = "[libdefaults]\n  default_realm = GEWISWG.GEWIS.NL\n  rdns = false\n\n[realms]\n  GEWISWG.GEWIS.NL = {\n    kdc = https://gewisvdesktop.gewis.nl/KdcProxy\n  }\n";
+
+    if let Ok(existing) = std::fs::read_to_string(CONF) {
+        if existing.contains(REALM) {
+            return Ok(()); // already configured
+        }
+        // Don't clobber a config that has other realms — show the snippet instead.
+        return Err(format!(
+            "Your {} is missing the GEWIS realm. Add this block, then reconnect:\n\n{}",
+            CONF, CONTENT
+        ));
+    }
+
+    status(app, "Configuring Kerberos (one-time)...");
+    let tmp = "/tmp/gewis_krb5.conf";
+    std::fs::write(tmp, CONTENT).map_err(|e| format!("temp write failed: {}", e))?;
+
+    // osascript shows the native macOS admin password dialog.
+    let script = format!(
+        "do shell script \"cp {} {} && chmod 644 {}\" with administrator privileges",
+        tmp, CONF, CONF
+    );
+    let ok = Command::new("osascript")
+        .args(["-e", &script])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !ok {
+        return Err("Kerberos setup was cancelled — it's required to log in.".into());
+    }
+    Ok(())
+}
+
 /// Probe whether the GEWIS RDP server is reachable directly on TCP 3389.
 /// True on TU/e WiFi (and some VPNs), false from the public internet.
 /// Used to decide whether to skip the HTTPS gateway tunnel.
@@ -144,10 +264,17 @@ fn run_connect(
     let ccache = {
         let brew = brew_prefix()?;
 
+        // First-run: make sure /etc/krb5.conf has the GEWIS realm.
+        ensure_krb5_conf(app)?;
+
+        let kinit = format!("{}/opt/krb5/bin/kinit", brew);
+        if !Path::new(&kinit).exists() {
+            return Err("MIT Kerberos not found. Run: brew install krb5".into());
+        }
+
         // Kerberos ticket via Homebrew krb5
         status(app, "Contacting GEWIS identity server...");
 
-        let kinit = format!("{}/opt/krb5/bin/kinit", brew);
         let mut proc = Command::new(&kinit)
             .args(["-c", CCACHE, &format!("{}@{}", member, REALM)])
             .stdin(Stdio::piped())
@@ -278,7 +405,16 @@ fn run_connect(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![connect, open_url])
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .invoke_handler(tauri::generate_handler![
+            connect,
+            open_url,
+            save_credentials,
+            load_password,
+            forget_credentials,
+            check_for_update,
+            do_update,
+        ])
         .run(tauri::generate_context!())
         .expect("error running GEWIS Remote Desktop");
 }

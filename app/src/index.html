@@ -189,6 +189,18 @@
 </head>
 <body>
 
+<div id="update-banner"
+     style="display:none;position:fixed;top:0;left:0;right:0;z-index:300;
+            align-items:center;justify-content:center;gap:10px;
+            padding:6px 12px;background:#C50000;color:#fff;font-size:12px;">
+  <span id="update-text"></span>
+  <button onclick="doUpdate()"
+          style="border:1px solid #fff;background:transparent;color:#fff;
+                 border-radius:5px;padding:2px 10px;font-size:12px;cursor:pointer;">
+    Update
+  </button>
+</div>
+
 <div class="form">
   <div class="logo">
     <img src="gewis-logo.svg" alt="GEWIS">
@@ -198,6 +210,11 @@
          autocomplete="username" spellcheck="false">
   <input id="password" type="password" placeholder="Password"
          autocomplete="current-password">
+
+  <label id="remember-row"
+         style="display:flex;align-items:center;gap:6px;font-size:12px;color:#6b7280;cursor:pointer;user-select:none;">
+    <input type="checkbox" id="remember"> Remember me
+  </label>
 
   <button id="connectBtn" onclick="go()">Connect</button>
 
@@ -246,9 +263,19 @@
 </div>
 
 <script>
+  const invoke = window.__TAURI__.core.invoke;
+  const $ = (id) => document.getElementById(id);
+
   // Status updates from Rust background thread
   window.__TAURI__.event.listen("status", (e) => {
-    document.getElementById("overlay-msg").textContent = e.payload;
+    $("overlay-msg").textContent = e.payload;
+    // kinit succeeded → credentials are valid, safe to save to Keychain
+    if (e.payload.startsWith("Identity confirmed") && $("remember").checked) {
+      invoke("save_credentials", {
+        member: $("member").value.trim(),
+        password: $("password").value,
+      }).catch(() => {});
+    }
   });
 
   // Error from Rust: retract circle, show error on form
@@ -309,19 +336,80 @@
     if (!member)   return showError("Enter your member number.");
     if (!password) return showError("Enter your password.");
 
+    persist();
+    // If "Remember me" is off, drop any previously stored password.
+    if (!$("remember").checked) invoke("forget_credentials", { member }).catch(() => {});
+
     // Show the ripple immediately — Rust runs in background, UI stays live
     showOverlay(document.getElementById("connectBtn"));
 
     // Fire-and-forget: returns instantly, progress/errors come via events
-    window.__TAURI__.core.invoke("connect", {
+    invoke("connect", {
       member,
       password,
-      display:   document.getElementById("display").value,
-      scale:     document.getElementById("scale").value,
-      clipboard: document.getElementById("clipboard").checked,
-      sound:     document.getElementById("sound").checked,
+      display:   $("display").value,
+      scale:     $("scale").value,
+      clipboard: $("clipboard").checked,
+      sound:     $("sound").checked,
     });
   }
+
+  // ── Settings persistence (localStorage) ─────────────────────────────────────
+  const FIELDS = ["display", "scale", "clipboard", "sound", "remember"];
+
+  function persist() {
+    localStorage.setItem("gewis.member", $("member").value.trim());
+    for (const id of FIELDS) {
+      const el = $(id);
+      localStorage.setItem("gewis." + id, el.type === "checkbox" ? el.checked : el.value);
+    }
+  }
+
+  async function restore() {
+    for (const id of FIELDS) {
+      const v = localStorage.getItem("gewis." + id);
+      if (v === null) continue;
+      const el = $(id);
+      if (el.type === "checkbox") el.checked = v === "true";
+      else el.value = v;
+    }
+    const m = localStorage.getItem("gewis.member");
+    if (m) $("member").value = m;
+
+    // Remember-me: pull the saved password from the Keychain
+    if ($("remember").checked && $("member").value.trim()) {
+      try {
+        const pw = await invoke("load_password", { member: $("member").value.trim() });
+        if (pw) $("password").value = pw;
+      } catch (e) {}
+    }
+  }
+
+  // Save settings whenever any control changes (even without connecting)
+  [...FIELDS, "member"].forEach((id) => $(id).addEventListener("change", persist));
+
+  // ── Auto-update ─────────────────────────────────────────────────────────────
+  async function checkUpdate() {
+    try {
+      const version = await invoke("check_for_update");
+      if (version) {
+        $("update-text").textContent = `Version ${version} available`;
+        $("update-banner").style.display = "flex";
+      }
+    } catch (e) {}
+  }
+
+  async function doUpdate() {
+    $("update-text").textContent = "Downloading update...";
+    try {
+      await invoke("do_update"); // downloads, installs, relaunches
+    } catch (e) {
+      $("update-text").textContent = "Update failed. Try again later.";
+    }
+  }
+
+  restore();
+  checkUpdate();
 
   // Track overlay state so Escape only retracts when the red screen is up
   let overlayActive = false;
